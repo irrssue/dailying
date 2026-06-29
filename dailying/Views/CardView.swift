@@ -51,6 +51,7 @@ struct CardView: View {
                 .multilineTextAlignment(.center)
                 .lineSpacing(6)
                 .fixedSize(horizontal: false, vertical: true)
+                .dynamicTypeSize(...DynamicTypeSize.accessibility2)
 
             Spacer(minLength: Theme.Space.xl)
 

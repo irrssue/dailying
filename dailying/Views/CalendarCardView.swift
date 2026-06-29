@@ -57,12 +57,21 @@ struct CalendarCardView: View {
 
     // MARK: - Timeline visualization
 
+    /// Height reserved for each event block (title + time, comfortably).
+    private let blockHeight: CGFloat = 46
+
+    private var timelineHeight: CGFloat {
+        // Enough room for every block plus breathing space, with a sensible floor.
+        max(CGFloat(blocks.count) * (blockHeight + 14) + 20, 280)
+    }
+
     private var timeline: some View {
         GeometryReader { geo in
             let totalMinutes = Double((dayEndHour - dayStartHour) * 60)
             let height = geo.size.height
             let trackX = geo.size.width * 0.30
             let labelWidth = geo.size.width * 0.24
+            let layout = laidOutTops(total: totalMinutes, height: height)
 
             ZStack(alignment: .topLeading) {
                 // The day track.
@@ -83,9 +92,9 @@ struct CalendarCardView: View {
                         .position(x: labelWidth / 2, y: y)
                 }
 
-                // Event blocks.
-                ForEach(blocks) { block in
-                    eventBlock(block, geo: geo, totalMinutes: totalMinutes, height: height, trackX: trackX)
+                // Event blocks at their de-overlapped tops.
+                ForEach(Array(blocks.enumerated()), id: \.element.id) { idx, block in
+                    eventBlock(block, geo: geo, topY: layout[idx], trackX: trackX)
                 }
 
                 // Current-time marker.
@@ -95,21 +104,33 @@ struct CalendarCardView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 300)
+        .frame(height: timelineHeight)
+    }
+
+    /// Proportional top positions, nudged downward so blocks never overlap.
+    /// Keeps events roughly time-anchored while staying readable.
+    private func laidOutTops(total: Double, height: CGFloat) -> [CGFloat] {
+        let minGap = blockHeight + 8
+        var tops: [CGFloat] = []
+        var last: CGFloat = -.greatestFiniteMagnitude
+        for block in blocks {
+            let ideal = yPosition(forMinutesFromStart: minutesFromStart(block.start),
+                                  total: total, height: height)
+            // Clamp so the last block still fits inside the track.
+            let maxTop = height - blockHeight
+            let top = min(max(ideal, last + minGap), maxTop)
+            tops.append(top)
+            last = top
+        }
+        return tops
     }
 
     private func eventBlock(
         _ block: CalendarBlock,
         geo: GeometryProxy,
-        totalMinutes: Double,
-        height: CGFloat,
+        topY: CGFloat,
         trackX: CGFloat
     ) -> some View {
-        let startMin = minutesFromStart(block.start)
-        let endMin = minutesFromStart(block.end)
-        let topY = yPosition(forMinutesFromStart: startMin, total: totalMinutes, height: height)
-        let rawHeight = yPosition(forMinutesFromStart: endMin, total: totalMinutes, height: height) - topY
-        let blockHeight = max(rawHeight, 22) // keep short events tappable/legible
         let blockWidth = geo.size.width - trackX - Theme.Space.md
 
         return HStack(spacing: Theme.Space.sm) {
@@ -127,9 +148,9 @@ struct CalendarCardView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, Theme.Space.xs)
-        .frame(width: blockWidth, height: blockHeight, alignment: .topLeading)
+        .padding(.vertical, 6)
+        .padding(.horizontal, Theme.Space.sm)
+        .frame(width: blockWidth, height: blockHeight, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: Theme.Radius.block)
                 .fill(block.accent.opacity(0.12))
@@ -162,6 +183,7 @@ struct CalendarCardView: View {
             .multilineTextAlignment(.center)
             .lineSpacing(5)
             .fixedSize(horizontal: false, vertical: true)
+            .dynamicTypeSize(...DynamicTypeSize.accessibility1)
             .padding(.bottom, Theme.Space.sm)
     }
 
