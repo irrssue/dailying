@@ -1,0 +1,140 @@
+// Prisma schema for the dailying backend.
+//
+// Data model overview:
+//   User            — one person; their settings (news opt-in, name, timezone).
+//   OAuthAccount    — a linked identity provider (Google/Apple) + stored tokens.
+//   Briefing        — one assembled morning briefing for a user on a given day.
+//   BriefingCard    — a card within a briefing (today/inbox/reminders/news).
+//   CalendarBlock   — a timeline block belonging to a `today` card.
+//
+// Tokens are stored encrypted-at-rest at the application layer is a future
+// hardening step; for now they live in dedicated columns. See AUTH notes in
+// the README.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  // Optional display name for the (future) personalized greeting. Mirrors the
+  // app's `userName` placeholder.
+  name      String?
+  // IANA timezone, e.g. "Europe/Paris". Used to decide when "morning" is and
+  // to render calendar blocks in local time. Defaults to UTC until known.
+  timezone  String   @default("UTC")
+
+  // Settings ---------------------------------------------------------------
+  // News is opt-in, off by default — matches the app's BriefingViewModel.
+  newsEnabled Boolean @default(false)
+
+  // Streak: consecutive days the user has opened their briefing.
+  streakDays    Int       @default(0)
+  lastOpenedAt  DateTime?
+
+  oauthAccounts OAuthAccount[]
+  briefings     Briefing[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+enum OAuthProvider {
+  google
+  apple
+}
+
+model OAuthAccount {
+  id       String        @id @default(cuid())
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId   String
+  provider OAuthProvider
+
+  // The provider's stable user id (Google `sub`, Apple `sub`).
+  providerAccountId String
+
+  // OAuth tokens for calling Google APIs on the user's behalf.
+  accessToken  String?  @db.Text
+  refreshToken String?  @db.Text
+  // When the access token expires (we refresh just before).
+  expiresAt    DateTime?
+  // Space-delimited scopes actually granted.
+  scope        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("oauth_accounts")
+}
+
+model Briefing {
+  id          String   @id @default(cuid())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+
+  generatedAt DateTime @default(now())
+  // The local calendar day this briefing is "for" (YYYY-MM-DD in user's tz),
+  // so we can fetch today's briefing and avoid regenerating duplicates.
+  forDate     String
+
+  streakDays  Int      @default(0)
+
+  cards       BriefingCard[]
+
+  createdAt   DateTime @default(now())
+
+  // One briefing per user per local day.
+  @@unique([userId, forDate])
+  @@index([userId, generatedAt])
+  @@map("briefings")
+}
+
+enum CardCategory {
+  today
+  inbox
+  reminders
+  news
+}
+
+model BriefingCard {
+  id         String       @id @default(cuid())
+  briefing   Briefing     @relation(fields: [briefingId], references: [id], onDelete: Cascade)
+  briefingId String
+
+  category   CardCategory
+  // ≤12-word narrative body, produced by the Claude pipeline.
+  body       String
+  deepLink   String?
+  // Ordering within the stack (0-based).
+  position   Int
+
+  blocks     CalendarBlock[]
+
+  @@index([briefingId])
+  @@map("briefing_cards")
+}
+
+model CalendarBlock {
+  id         String       @id @default(cuid())
+  card       BriefingCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  cardId     String
+
+  title      String
+  start      DateTime
+  end        DateTime
+  // CalendarBlock.AccentName raw value in the app.
+  accentName String
+
+  @@index([cardId])
+  @@map("calendar_blocks")
+}

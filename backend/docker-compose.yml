@@ -1,0 +1,37 @@
+# Local datastores for development. Run `docker compose up -d` then point
+# DATABASE_URL / REDIS_URL in .env at these. The API and worker run on the host
+# (npm run dev / npm run worker) so you get fast reloads; only Postgres and
+# Redis live in containers.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dailying
+      POSTGRES_PASSWORD: dailying
+      POSTGRES_DB: dailying
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dailying"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
+  redisdata:
