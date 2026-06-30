@@ -8,6 +8,11 @@
 
 FROM node:22-slim AS build
 WORKDIR /app
+# node:*-slim ships without OpenSSL; Prisma needs it to pick its query engine
+# (otherwise it warns and guesses). ca-certificates is for outbound HTTPS to the
+# Google / Anthropic / news APIs.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json* ./
 RUN npm ci
 COPY prisma ./prisma
@@ -24,6 +29,8 @@ CMD ["npx", "prisma", "migrate", "deploy"]
 FROM node:22-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 COPY prisma ./prisma
