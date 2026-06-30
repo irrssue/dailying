@@ -166,10 +166,18 @@ the datastores; `docker-compose.prod.yml` overlays the API + worker (and a
 one-shot `migrate` service that runs `prisma migrate deploy` before they start).
 All three app processes share one image built from the `Dockerfile`.
 
+Deployed location on the homeserver: **`~/dailying/backend/`** (a git checkout —
+`git pull` to update). `.env` lives there with `BIND_IP` = the Tailscale IP,
+`API_PORT=8090`, `NODE_ENV=production`, and a server-specific `JWT_SECRET`.
+
 ```bash
-# On the homeserver, in this repo's backend/ dir, with .env populated:
-export BIND_IP=$(tailscale ip -4 | head -1)      # publish on the tailnet only
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# On the homeserver, in ~/dailying/backend, with .env populated:
+git pull
+# Rebuild the image when code changed (safe to skip if only compose/env changed):
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml build
+# Bring the stack up. Pass --env-file explicitly so BIND_IP/API_PORT interpolate.
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml \
+  up -d --no-recreate
 ```
 
 This brings up `dailying_postgres`, `dailying_redis`, runs `dailying_migrate`
@@ -179,14 +187,27 @@ containers reach the stores by service name — the overlay sets their
 dev workflow) are ignored inside the containers.
 
 The API is published on `BIND_IP:API_PORT`. On the homeserver nextcloud already
-holds host port 8080, so `API_PORT=8090` (set in `.env`); the container still
-listens on 8080 internally.
+holds host port 8080, so `API_PORT=8090`; the container still listens on 8080
+internally.
+
+> **Recreate gotcha.** On this host (Docker 29 / Compose v5.1.3) a plain
+> `compose up` that has to *recreate* a running container hangs in the recreate
+> step. So:
+> - **New image / code change:** recreate one service at a time, datastores
+>   untouched:
+>   ```bash
+>   docker rm -f dailying_api dailying_worker
+>   docker compose --env-file ... up -d --no-recreate   # re-creates them fresh
+>   ```
+>   (`--no-recreate` only *creates* missing containers, which doesn't hang;
+>   removing-then-creating avoids the recreate path entirely.)
+> - **Never** recreate `postgres`/`redis` this way — stopping them mid-recreate
+>   is what left the stack half-down once. They rarely need recreating; if they
+>   do, `docker stop`/`docker start` them directly.
 
 Verify:
 
 ```bash
 curl http://$BIND_IP:${API_PORT:-8080}/readyz | jq
+# → {"ready":true,"checks":{"postgres":true,"redis":true}, ...}
 ```
-
-> Deployed location on the homeserver: `~/docker/dailying/`. The compose files
-> there are this repo's — `git pull` to update, then re-run the `up` command.
