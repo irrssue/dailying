@@ -173,15 +173,19 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
 This brings up `dailying_postgres`, `dailying_redis`, runs `dailying_migrate`
-to completion, then starts `dailying_api` (`:8080` on the Tailscale IP) and
-`dailying_worker`. The api/worker containers reach the stores by service name —
-the overlay sets their `DATABASE_URL`/`REDIS_URL`, so the `homelab` values in
-`.env` (used by the Mac dev workflow) are ignored inside the containers.
+to completion, then starts `dailying_api` and `dailying_worker`. The api/worker
+containers reach the stores by service name — the overlay sets their
+`DATABASE_URL`/`REDIS_URL`, so the `homelab` values in `.env` (used by the Mac
+dev workflow) are ignored inside the containers.
+
+The API is published on `BIND_IP:API_PORT`. On the homeserver nextcloud already
+holds host port 8080, so `API_PORT=8090` (set in `.env`); the container still
+listens on 8080 internally.
 
 Verify:
 
 ```bash
-curl http://$BIND_IP:8080/readyz | jq
+curl http://$BIND_IP:${API_PORT:-8080}/readyz | jq
 ```
 
 > Deployed location on the homeserver: `~/docker/dailying/`. The compose files

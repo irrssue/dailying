@@ -38,7 +38,9 @@ services:
     ports:
       # Publish the API only on the host's Tailscale IP, same posture as the
       # datastores — reachable from the tailnet (incl. the phone), not the LAN.
-      - "${BIND_IP:-127.0.0.1}:8080:8080"
+      # API_PORT is the *host* port (the container always listens on 8080);
+      # override it when 8080 is taken on the host (e.g. nextcloud uses it).
+      - "${BIND_IP:-127.0.0.1}:${API_PORT:-8080}:8080"
     networks:
       - dailying
     depends_on:
