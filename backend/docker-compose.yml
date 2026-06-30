@@ -9,6 +9,12 @@
 # This file is the source of truth for what runs on the homeserver. To also run
 # the API + worker as containers there, layer the prod overlay on top:
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# Pin the project name so volume/container names stay `dailying_*` no matter
+# which directory compose is invoked from (the files live in backend/, but the
+# existing homeserver volumes are dailying_pgdata / dailying_redisdata).
+name: dailying
+
 services:
   postgres:
     image: postgres:16-alpine
