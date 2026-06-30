@@ -1,0 +1,79 @@
+# Production overlay: runs the API + worker as containers alongside the
+# datastores defined in docker-compose.yml. Layer it on top of the base file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# On release, migrations run automatically via the one-shot `migrate` service;
+# api and worker wait for it to finish. All three share one image built from the
+# Dockerfile. Configuration comes from .env (DATABASE_URL / REDIS_URL must point
+# at the `postgres` / `redis` service names — see .env.example).
+services:
+  migrate:
+    build:
+      context: .
+      target: migrate
+    image: dailying-backend:migrate
+    container_name: dailying_migrate
+    env_file: .env
+    networks:
+      - dailying
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: runtime
+    image: dailying-backend:latest
+    container_name: dailying_api
+    command: ["node", "dist/server.js"]
+    env_file: .env
+    environment:
+      # Inside the compose network the app reaches the stores by service name,
+      # regardless of what BIND_IP the host publishes them on.
+      DATABASE_URL: postgresql://dailying:dailying@postgres:5432/dailying?schema=public
+      REDIS_URL: redis://redis:6379
+    ports:
+      # Publish the API only on the host's Tailscale IP, same posture as the
+      # datastores — reachable from the tailnet (incl. the phone), not the LAN.
+      - "${BIND_IP:-127.0.0.1}:8080:8080"
+    networks:
+      - dailying
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    build:
+      context: .
+      target: runtime
+    image: dailying-backend:latest
+    container_name: dailying_worker
+    command: ["node", "dist/jobs/worker.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://dailying:dailying@postgres:5432/dailying?schema=public
+      REDIS_URL: redis://redis:6379
+    networks:
+      - dailying
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped

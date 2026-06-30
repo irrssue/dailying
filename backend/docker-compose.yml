@@ -1,19 +1,29 @@
-# Local datastores for development. Run `docker compose up -d` then point
-# DATABASE_URL / REDIS_URL in .env at these. The API and worker run on the host
-# (npm run dev / npm run worker) so you get fast reloads; only Postgres and
-# Redis live in containers.
-
+# dailying datastores (Postgres + Redis).
+#
+# These are bound to BIND_IP, which on the homeserver is its Tailscale IP
+# (100.100.200.29) — so the stores are reachable from tailnet devices (the dev
+# Mac runs `npm run dev`/`worker` against them) but NOT from the LAN or the
+# public internet. Override BIND_IP in .env per host; it defaults to localhost
+# so a plain `docker compose up` on a laptop stays private too.
+#
+# This file is the source of truth for what runs on the homeserver. To also run
+# the API + worker as containers there, layer the prod overlay on top:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 services:
   postgres:
     image: postgres:16-alpine
+    container_name: dailying_postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: dailying
       POSTGRES_PASSWORD: dailying
       POSTGRES_DB: dailying
     ports:
-      - "5432:5432"
+      - "${BIND_IP:-127.0.0.1}:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - dailying
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dailying"]
       interval: 5s
@@ -22,15 +32,23 @@ services:
 
   redis:
     image: redis:7-alpine
+    container_name: dailying_redis
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "${BIND_IP:-127.0.0.1}:6379:6379"
     volumes:
       - redisdata:/data
+    networks:
+      - dailying
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 10
+
+networks:
+  dailying:
+    name: dailying
 
 volumes:
   pgdata:

@@ -51,43 +51,47 @@ prisma/schema.prisma     User, OAuthAccount, Briefing, BriefingCard, CalendarBlo
 The wire contract in `src/types/briefing.ts` is the load-bearing seam — it must
 stay in lockstep with `../dailying/Models/{Briefing,BriefingCard,CardCategory}.swift`.
 
-## Running it locally
+## Running it
 
-### 1. Prerequisites
+There are two supported topologies. The day-to-day one is **A**.
 
-- Node 20+
-- Docker (for Postgres + Redis), or your own instances
+### A. Dev on the Mac, datastores on the homeserver (default)
 
-### 2. Datastores
+Postgres + Redis run in Docker on the homeserver (`homelab`), bound to its
+Tailscale IP so they're reachable from the tailnet (this Mac, the phone) but
+not the LAN or the public internet. The API + worker run on the Mac via `tsx`
+for fast reload.
 
 ```bash
+# On the homeserver, once — bring up the datastores:
+#   cd ~/docker/dailying && BIND_IP=$(tailscale ip -4 | head -1) \
+#     docker compose up -d
+# (the compose file is this repo's backend/docker-compose.yml)
+
+# On the Mac:
 cd backend
-docker compose up -d        # postgres on :5432, redis on :6379
-```
-
-### 3. Env
-
-```bash
 cp .env.example .env
-# Generate a JWT secret:
 node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
-# Paste it as JWT_SECRET, then fill the TODO(liam) credentials (see below).
-```
-
-### 4. Install + migrate
-
-```bash
+#   ↳ paste as JWT_SECRET; DATABASE_URL/REDIS_URL already point at `homelab`.
 npm install
 npm run prisma:generate
-npm run prisma:migrate      # creates the schema in Postgres
+npm run prisma:deploy      # apply migrations to the homeserver Postgres
+npm run dev                # API on :8080  (http://localhost:8080/healthz)
+npm run worker             # BullMQ worker, in a second terminal
 ```
 
-### 5. Run
+`homelab` resolves to the Tailscale IP via MagicDNS, so no `/etc/hosts` edit is
+needed as long as Tailscale is up on both machines.
 
-```bash
-npm run dev        # API on :8080  (http://localhost:8080/healthz)
-npm run worker     # BullMQ worker, in a second terminal
-```
+### B. Full stack in containers on the homeserver
+
+Run the API + worker as containers too, alongside the datastores — see
+[Deploy](#deploy). Use this once you're not iterating on the backend.
+
+### Local-only fallback (no homeserver)
+
+Leave `BIND_IP` unset (binds to `127.0.0.1`), point `DATABASE_URL`/`REDIS_URL`
+at `localhost`, and `docker compose up -d` the datastores on your own machine.
 
 Check readiness — it reports which credentials are still missing:
 
@@ -157,8 +161,28 @@ npm run typecheck # full TS typecheck
 
 ## Deploy
 
-`Dockerfile` builds one image used for both processes. Run the API with the
-default `CMD`; run the worker with the command overridden to
-`node dist/jobs/worker.js`. Apply migrations with `npm run prisma:deploy` on
-release. Point `DATABASE_URL` / `REDIS_URL` / the credential env vars at your
-managed instances.
+The whole stack runs on the homeserver via Compose. `docker-compose.yml` holds
+the datastores; `docker-compose.prod.yml` overlays the API + worker (and a
+one-shot `migrate` service that runs `prisma migrate deploy` before they start).
+All three app processes share one image built from the `Dockerfile`.
+
+```bash
+# On the homeserver, in this repo's backend/ dir, with .env populated:
+export BIND_IP=$(tailscale ip -4 | head -1)      # publish on the tailnet only
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+This brings up `dailying_postgres`, `dailying_redis`, runs `dailying_migrate`
+to completion, then starts `dailying_api` (`:8080` on the Tailscale IP) and
+`dailying_worker`. The api/worker containers reach the stores by service name —
+the overlay sets their `DATABASE_URL`/`REDIS_URL`, so the `homelab` values in
+`.env` (used by the Mac dev workflow) are ignored inside the containers.
+
+Verify:
+
+```bash
+curl http://$BIND_IP:8080/readyz | jq
+```
+
+> Deployed location on the homeserver: `~/docker/dailying/`. The compose files
+> there are this repo's — `git pull` to update, then re-run the `up` command.
